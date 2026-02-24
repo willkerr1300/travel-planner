@@ -5,12 +5,22 @@
 - Python 3.12+
 - Docker Desktop
 
+**Before starting:** Open Docker Desktop and wait until it is running (whale icon in the menu bar). Otherwise `docker` commands will fail.
+
 ---
 
 ## 1. Start the database
 
+From the project root:
+
 ```bash
 docker compose up -d
+```
+
+If that fails with "unknown shorthand flag" or "compose: command not found", try the standalone Compose (v1) instead:
+
+```bash
+docker-compose up -d
 ```
 
 PostgreSQL is now running on `localhost:5432`.
