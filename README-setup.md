@@ -40,6 +40,7 @@ Edit `.env.local` and fill in:
 | Variable | Where to get it | Who sets it |
 |---|---|---|
 | `AUTH_SECRET` | Run `openssl rand -base64 32` | **Each developer** — generate your own; keep it secret |
+| `AUTH_URL` | `http://localhost:3000` (default) | Same for everyone when running locally — required for PKCE cookies |
 | `GOOGLE_CLIENT_ID` | Google Cloud Console → APIs & Services → Credentials | **Shared or per-dev** — one team "local dev" OAuth client is fine (redirect is localhost); or create your own |
 | `GOOGLE_CLIENT_SECRET` | Same as above | Same as above |
 | `INTERNAL_API_KEY` | Long random string — must match backend `.env` | **Agree as a team** — use one shared dev value so frontend and backend match, or each dev generates one and sets it in both places |
