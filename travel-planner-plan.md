@@ -66,9 +66,9 @@ An AI agent that takes a trip request in plain English, searches flights/hotels/
 
 **Week 3–4:** Search layer. Connect Amadeus for flights, Booking.com API for hotels. Build the trip spec parser and itinerary generator. No booking yet — just solid search and presentation.
 
-**Week 5–7:** Booking execution for one airline (United or American) and one hotel chain (Marriott). Get one full end-to-end flow working reliably before touching anything else. This is the hardest engineering work.
+**Week 5–7:** Booking execution for one airline (United or American) and one hotel chain (Marriott). Get one full end-to-end flow working reliably before touching anything else. This is the hardest engineering work. Before moving on, disable mock mode and validate real bookings end-to-end — a simulated booking is not a shipped feature.
 
-**Week 8–9:** Expand to 3–4 more sites. Add Expedia as a fallback for hotels. Add one activity platform (Viator). Build the confirmation parser that extracts structured data from confirmation emails.
+**Week 8–9:** Expand to 3–4 more sites. Add Expedia as a fallback for hotels. Add one activity platform (Viator). Build the confirmation parser that extracts structured data from confirmation emails (PNR, confirmation numbers, check-in times). Add SendGrid email delivery so users receive a consolidated confirmation after each booking completes.
 
 **Week 10–12:** Trip monitoring, change detection, and the modification flow. Polish the frontend booking status UI so users can watch the agent work in real time.
 
