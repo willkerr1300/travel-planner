@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import profile, trips
 
-app = FastAPI(title="Travel Planner API", version="0.2.0")
+app = FastAPI(title="Travel Planner API", version="0.3.0")
 
 # Only allow requests from the Next.js server (not the browser directly)
 app.add_middleware(

@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation"
 import Link from "next/link"
 import { SignOutButton } from "@/components/SignOutButton"
 import { ItineraryCard } from "@/components/ItineraryCard"
+import { BookingStatus } from "@/components/BookingStatus"
 
 interface ParsedSpec {
   origin?: string
@@ -52,11 +53,14 @@ async function getTrip(id: string, email: string): Promise<Trip | null> {
 }
 
 const STATUS_MESSAGES: Record<string, string> = {
-  parsing: "Parsing your trip request…",
-  searching: "Searching for flights and hotels…",
+  parsing:       "Parsing your trip request…",
+  searching:     "Searching for flights and hotels…",
   search_failed: "We couldn't find matching flights or hotels. Try adjusting your request.",
-  failed: "Something went wrong processing this trip.",
+  failed:        "Something went wrong processing this trip.",
 }
+
+// Statuses that show the booking panel instead of (or alongside) options
+const BOOKING_STATUSES = new Set(["approved", "booking", "confirmed", "booking_failed"])
 
 export default async function TripPage({
   params,
@@ -73,16 +77,14 @@ export default async function TripPage({
   const spec = trip.parsed_spec
   const options = trip.itinerary_options ?? []
   const approvedLabel = trip.approved_itinerary?.label
+  const showBookingPanel = BOOKING_STATUSES.has(trip.status)
 
   return (
     <div className="min-h-screen bg-zinc-50">
       {/* Nav */}
       <nav className="bg-white border-b border-zinc-100 px-8 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link
-            href="/dashboard"
-            className="text-sm text-zinc-500 hover:text-zinc-900 transition-colors"
-          >
+          <Link href="/dashboard" className="text-sm text-zinc-500 hover:text-zinc-900 transition-colors">
             ← Dashboard
           </Link>
           <span className="text-zinc-200">|</span>
@@ -98,9 +100,7 @@ export default async function TripPage({
         {/* Trip header */}
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-zinc-900">
-            {spec?.destination_city
-              ? `Trip to ${spec.destination_city}`
-              : "Your trip"}
+            {spec?.destination_city ? `Trip to ${spec.destination_city}` : "Your trip"}
           </h1>
           <p className="mt-1 text-zinc-500 text-sm italic">&ldquo;{trip.raw_request}&rdquo;</p>
 
@@ -131,7 +131,7 @@ export default async function TripPage({
           )}
         </div>
 
-        {/* In-progress states */}
+        {/* In-progress parsing / searching */}
         {(trip.status === "parsing" || trip.status === "searching") && (
           <div className="rounded-2xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
             <div className="w-8 h-8 border-2 border-zinc-900 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
@@ -153,34 +153,32 @@ export default async function TripPage({
           </div>
         )}
 
-        {/* Itinerary options */}
+        {/* Itinerary options grid */}
         {options.length > 0 && (
           <>
-            {trip.status === "approved" ? (
-              <div className="mb-6 rounded-xl bg-green-50 border border-green-200 px-5 py-4">
-                <p className="text-sm font-medium text-green-800">
-                  You approved the <strong>{approvedLabel}</strong> option.
-                  Booking execution will be available in Week 5.
-                </p>
-              </div>
-            ) : (
+            {!showBookingPanel && (
               <p className="mb-6 text-sm text-zinc-500">
                 Here are your itinerary options — pick one to lock it in.
               </p>
             )}
 
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 mb-8">
               {options.map((option, i) => (
                 <ItineraryCard
                   key={i}
                   option={option as Parameters<typeof ItineraryCard>[0]["option"]}
                   optionIndex={i}
                   tripId={trip.id}
-                  approved={trip.status === "approved" && approvedLabel === option.label}
+                  approved={BOOKING_STATUSES.has(trip.status) && approvedLabel === option.label}
                 />
               ))}
             </div>
           </>
+        )}
+
+        {/* Booking panel — shown after approval */}
+        {showBookingPanel && (
+          <BookingStatus tripId={trip.id} initialStatus={trip.status} />
         )}
       </main>
     </div>

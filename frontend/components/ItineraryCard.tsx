@@ -49,21 +49,21 @@ interface Props {
   approved: boolean
 }
 
-function formatDate(iso: string) {
-  if (!iso) return "—"
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
-}
-
 function formatTime(iso: string) {
   if (!iso) return "—"
   return new Date(iso).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
+  })
+}
+
+function formatDate(iso: string) {
+  if (!iso) return "—"
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   })
 }
 
@@ -91,9 +91,10 @@ export function ItineraryCard({ option, optionIndex, tripId, approved }: Props) 
   const [error, setError] = useState<string | null>(null)
 
   const outboundSeg = option.flight.segments[0]
-  const stopLabel = option.flight.outbound_stops === 0
-    ? "Nonstop"
-    : `${option.flight.outbound_stops} stop${option.flight.outbound_stops > 1 ? "s" : ""}`
+  const stopLabel =
+    option.flight.outbound_stops === 0
+      ? "Nonstop"
+      : `${option.flight.outbound_stops} stop${option.flight.outbound_stops > 1 ? "s" : ""}`
 
   async function handleApprove() {
     setLoading(true)
@@ -118,9 +119,11 @@ export function ItineraryCard({ option, optionIndex, tripId, approved }: Props) 
   }
 
   return (
-    <div className={`rounded-2xl border bg-white shadow-sm flex flex-col ${
-      approved ? "border-zinc-900 ring-2 ring-zinc-900" : "border-zinc-200"
-    }`}>
+    <div
+      className={`rounded-2xl border bg-white shadow-sm flex flex-col ${
+        approved ? "border-zinc-900 ring-2 ring-zinc-900" : "border-zinc-200"
+      }`}
+    >
       {/* Header */}
       <div className="px-6 pt-5 pb-4 border-b border-zinc-100">
         <div className="flex items-center justify-between">
@@ -193,7 +196,7 @@ export function ItineraryCard({ option, optionIndex, tripId, approved }: Props) 
         {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
         {approved ? (
           <div className="rounded-xl bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white text-center">
-            Approved — booking coming in Week 5
+            Selected
           </div>
         ) : (
           <button
@@ -201,7 +204,7 @@ export function ItineraryCard({ option, optionIndex, tripId, approved }: Props) 
             disabled={loading}
             className="w-full rounded-xl border border-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors disabled:opacity-40"
           >
-            {loading ? "Approving…" : "Choose this trip"}
+            {loading ? "Selecting…" : "Choose this trip"}
           </button>
         )}
       </div>

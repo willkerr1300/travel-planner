@@ -9,6 +9,10 @@ type LoyaltyProgram = {
 }
 
 type ProfileData = {
+  first_name?: string
+  last_name?: string
+  date_of_birth?: string
+  phone?: string
   passport_number?: string
   tsa_known_traveler?: string
   seat_preference?: string
@@ -26,6 +30,10 @@ export function ProfileForm({ initialData }: { initialData: ProfileData | null }
   const [error, setError] = useState<string | null>(null)
 
   const [form, setForm] = useState<ProfileData>({
+    first_name: initialData?.first_name ?? "",
+    last_name: initialData?.last_name ?? "",
+    date_of_birth: initialData?.date_of_birth ?? "",
+    phone: initialData?.phone ?? "",
     passport_number: initialData?.passport_number ?? "",
     tsa_known_traveler: initialData?.tsa_known_traveler ?? "",
     seat_preference: initialData?.seat_preference ?? "No preference",
@@ -80,6 +88,41 @@ export function ProfileForm({ initialData }: { initialData: ProfileData | null }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
+      {/* Personal Info — required for booking passenger forms */}
+      <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-zinc-900 mb-1">Personal Info</h2>
+        <p className="text-xs text-zinc-400 mb-4">
+          Used by the booking agent to fill in your passenger details. Required before booking.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field
+            label="First Name"
+            placeholder="Jane"
+            value={form.first_name ?? ""}
+            onChange={(v) => setForm((f) => ({ ...f, first_name: v }))}
+          />
+          <Field
+            label="Last Name"
+            placeholder="Smith"
+            value={form.last_name ?? ""}
+            onChange={(v) => setForm((f) => ({ ...f, last_name: v }))}
+          />
+          <Field
+            label="Date of Birth"
+            type="date"
+            value={form.date_of_birth ?? ""}
+            onChange={(v) => setForm((f) => ({ ...f, date_of_birth: v }))}
+          />
+          <Field
+            label="Phone Number"
+            type="tel"
+            placeholder="+1 415 555 0100"
+            value={form.phone ?? ""}
+            onChange={(v) => setForm((f) => ({ ...f, phone: v }))}
+          />
+        </div>
+      </section>
+
       {/* Travel Documents */}
       <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-zinc-900 mb-4">Travel Documents</h2>

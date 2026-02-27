@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.database import get_db
-from app.models import User, Trip
+from app.models import User, Trip, Booking, AgentLog
 from app.auth import require_internal_key, get_current_user_email
 from app.services.trip_parser import parse_trip_request
 from app.services.amadeus import search_flights, search_hotels
@@ -12,6 +12,10 @@ from app.services.itinerary import build_itinerary_options
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
+
+# ---------------------------------------------------------------------------
+# Shared output models
+# ---------------------------------------------------------------------------
 
 class TripRequestIn(BaseModel):
     raw_request: str
@@ -27,6 +31,34 @@ class TripOut(BaseModel):
     created_at: str
 
 
+class AgentLogOut(BaseModel):
+    step: str
+    action: str
+    result: str
+    error_message: Optional[str] = None
+    created_at: str
+
+
+class BookingOut(BaseModel):
+    id: str
+    type: str
+    status: str
+    confirmation_number: Optional[str] = None
+    details: Optional[dict] = None
+    logs: list[AgentLogOut] = []
+    created_at: str
+
+
+class BookOut(BaseModel):
+    trip_id: str
+    status: str
+    bookings: list[dict]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _trip_to_out(trip: Trip) -> TripOut:
     return TripOut(
         id=str(trip.id),
@@ -39,6 +71,32 @@ def _trip_to_out(trip: Trip) -> TripOut:
     )
 
 
+def _log_to_out(log: AgentLog) -> AgentLogOut:
+    return AgentLogOut(
+        step=log.step,
+        action=log.action,
+        result=log.result,
+        error_message=log.error_message,
+        created_at=log.created_at.isoformat(),
+    )
+
+
+def _booking_to_out(booking: Booking) -> BookingOut:
+    return BookingOut(
+        id=str(booking.id),
+        type=booking.type,
+        status=booking.status,
+        confirmation_number=booking.confirmation_number,
+        details=booking.details,
+        logs=[_log_to_out(l) for l in (booking.agent_logs or [])],
+        created_at=booking.created_at.isoformat(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Trip CRUD
+# ---------------------------------------------------------------------------
+
 @router.post("", response_model=TripOut, status_code=status.HTTP_201_CREATED)
 async def create_trip(
     data: TripRequestIn,
@@ -48,9 +106,8 @@ async def create_trip(
 ):
     """
     Parse a plain-English trip request, search for flights + hotels, and return
-    2-3 itinerary options. Runs synchronously — a task queue will be added in Week 5.
+    2-3 itinerary options.
     """
-    # Get or lazily create the user record
     user = db.query(User).filter(User.email == email).first()
     if not user:
         user = User(email=email)
@@ -58,14 +115,12 @@ async def create_trip(
         db.commit()
         db.refresh(user)
 
-    # Persist the trip immediately so the user can see it even if something fails
     trip = Trip(user_id=user.id, raw_request=data.raw_request, status="parsing")
     db.add(trip)
     db.commit()
     db.refresh(trip)
 
     try:
-        # 1. Parse the natural-language request
         parsed_spec = await parse_trip_request(data.raw_request)
         trip.parsed_spec = parsed_spec
         trip.status = "searching"
@@ -82,7 +137,6 @@ async def create_trip(
         flight_offers: list = []
         hotel_offers: list = []
 
-        # 2. Search flights
         if origin and destination and depart_date:
             try:
                 flight_offers = await search_flights(
@@ -96,7 +150,6 @@ async def create_trip(
             except Exception as exc:
                 print(f"[trips] flight search error: {exc}")
 
-        # 3. Search hotels
         if destination and depart_date and return_date:
             try:
                 hotel_offers = await search_hotels(
@@ -108,7 +161,6 @@ async def create_trip(
             except Exception as exc:
                 print(f"[trips] hotel search error: {exc}")
 
-        # 4. Build itinerary packages
         options = build_itinerary_options(
             flight_offers=flight_offers,
             hotel_offers=hotel_offers,
@@ -159,15 +211,15 @@ def get_trip(
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
-    trip = (
-        db.query(Trip)
-        .filter(Trip.id == trip_id, Trip.user_id == user.id)
-        .first()
-    )
+    trip = db.query(Trip).filter(Trip.id == trip_id, Trip.user_id == user.id).first()
     if not trip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
     return _trip_to_out(trip)
 
+
+# ---------------------------------------------------------------------------
+# Approve an itinerary option
+# ---------------------------------------------------------------------------
 
 class ApproveIn(BaseModel):
     option_index: int = 0
@@ -184,11 +236,7 @@ def approve_trip(
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
-    trip = (
-        db.query(Trip)
-        .filter(Trip.id == trip_id, Trip.user_id == user.id)
-        .first()
-    )
+    trip = db.query(Trip).filter(Trip.id == trip_id, Trip.user_id == user.id).first()
     if not trip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
     if trip.status != "options_ready":
@@ -209,3 +257,106 @@ def approve_trip(
     db.commit()
     db.refresh(trip)
     return _trip_to_out(trip)
+
+
+# ---------------------------------------------------------------------------
+# Trigger booking execution
+# ---------------------------------------------------------------------------
+
+@router.post("/{trip_id}/book", response_model=BookOut, status_code=status.HTTP_202_ACCEPTED)
+def book_trip(
+    trip_id: str,
+    email: str = Depends(get_current_user_email),
+    _key: str = Depends(require_internal_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Start async booking for an approved trip. Creates Booking records, enqueues
+    the Celery task, and returns immediately with 202 Accepted.
+
+    The frontend polls GET /trips/{id}/bookings for live progress.
+    """
+    from app.tasks.booking_tasks import execute_trip_bookings
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+    trip = db.query(Trip).filter(Trip.id == trip_id, Trip.user_id == user.id).first()
+    if not trip:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+    if trip.status != "approved":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Trip must be approved before booking (current status: {trip.status})",
+        )
+
+    # Require at minimum first + last name for passenger forms
+    if not user.first_name or not user.last_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please add your first and last name in your profile before booking.",
+        )
+
+    approved = trip.approved_itinerary or {}
+
+    # Create one Booking record per component (flight + hotel)
+    created_bookings = []
+
+    if approved.get("flight"):
+        flight_booking = Booking(
+            trip_id=trip.id,
+            type="flight",
+            status="pending",
+            details={"flight": approved["flight"]},
+        )
+        db.add(flight_booking)
+        created_bookings.append(flight_booking)
+
+    if approved.get("hotel"):
+        hotel_booking = Booking(
+            trip_id=trip.id,
+            type="hotel",
+            status="pending",
+            details={"hotel": approved["hotel"]},
+        )
+        db.add(hotel_booking)
+        created_bookings.append(hotel_booking)
+
+    trip.status = "booking"
+    db.commit()
+    for b in created_bookings:
+        db.refresh(b)
+
+    # Enqueue the Celery task — runs asynchronously
+    execute_trip_bookings.delay(str(trip.id))
+
+    return BookOut(
+        trip_id=str(trip.id),
+        status="booking",
+        bookings=[{"id": str(b.id), "type": b.type, "status": b.status} for b in created_bookings],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Get booking status (polled by the frontend)
+# ---------------------------------------------------------------------------
+
+@router.get("/{trip_id}/bookings", response_model=list[BookingOut])
+def list_bookings(
+    trip_id: str,
+    email: str = Depends(get_current_user_email),
+    _key: str = Depends(require_internal_key),
+    db: Session = Depends(get_db),
+):
+    """Return all bookings for a trip, each with their agent log entries."""
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+    trip = db.query(Trip).filter(Trip.id == trip_id, Trip.user_id == user.id).first()
+    if not trip:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+
+    bookings = db.query(Booking).filter(Booking.trip_id == trip_id).all()
+    return [_booking_to_out(b) for b in bookings]

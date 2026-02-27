@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, JSON, Text, ForeignKey
+from sqlalchemy import Column, String, DateTime, JSON, Text, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -11,6 +11,12 @@ class User(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
+
+    # Personal info — needed by the booking agent to fill passenger forms
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
+    date_of_birth = Column(String(10), nullable=True)  # YYYY-MM-DD, plaintext
+    phone = Column(String(30), nullable=True)
 
     # Encrypted at the application layer using Fernet before writing to DB
     passport_number_enc = Column(String, nullable=True)
@@ -35,15 +41,14 @@ class Trip(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
 
-    # Status flow: parsing → searching → options_ready → approved | search_failed | failed
+    # Status flow: parsing → searching → options_ready → approved →
+    #              booking → confirmed | booking_failed | failed
     status = Column(String(50), nullable=False, default="parsing")
 
     # Original plain-English request from the user
     raw_request = Column(Text, nullable=False)
 
     # Structured spec extracted by the trip parser (Claude)
-    # {origin, destination, destination_city, depart_date, return_date,
-    #  budget_total, num_travelers, cabin_class, hotel_area, notes}
     parsed_spec = Column(JSON, nullable=True)
 
     # List of 2-3 itinerary option objects built by the itinerary service
@@ -66,12 +71,41 @@ class Booking(Base):
     trip_id = Column(UUID(as_uuid=True), ForeignKey("trips.id"), nullable=False, index=True)
 
     type = Column(String(50), nullable=False)   # flight | hotel | activity
-    status = Column(String(50), nullable=False, default="pending")  # pending | confirmed | failed
+    # pending → in_progress → confirmed | failed | unsupported
+    status = Column(String(50), nullable=False, default="pending")
 
     confirmation_number = Column(String, nullable=True)
     details = Column(JSON, nullable=True)  # carrier, PNR, hotel name, check-in, etc.
+
+    # Stripe Issuing card ID — kept so we can void the card if booking fails
+    virtual_card_id = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     trip = relationship("Trip", back_populates="bookings")
+    agent_logs = relationship("AgentLog", back_populates="booking", cascade="all, delete-orphan",
+                              order_by="AgentLog.created_at")
+
+
+class AgentLog(Base):
+    """Step-by-step log of the booking agent's actions for one booking."""
+    __tablename__ = "agent_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    booking_id = Column(UUID(as_uuid=True), ForeignKey("bookings.id"), nullable=False, index=True)
+
+    # e.g. "navigate", "fill_passenger", "select_seat", "payment", "confirm"
+    step = Column(String(100), nullable=False)
+    # Human-readable description of the action taken
+    action = Column(Text, nullable=False)
+    # "success" | "in_progress" | "error"
+    result = Column(String(20), nullable=False)
+
+    # Base64-encoded PNG screenshot at this step (only stored for errors + final confirm)
+    screenshot_b64 = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    booking = relationship("Booking", back_populates="agent_logs")

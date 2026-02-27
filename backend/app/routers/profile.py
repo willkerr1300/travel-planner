@@ -16,6 +16,12 @@ class LoyaltyProgram(BaseModel):
 
 
 class ProfileIn(BaseModel):
+    # Personal info — needed by the booking agent to fill passenger forms
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[str] = None   # YYYY-MM-DD
+    phone: Optional[str] = None
+
     passport_number: Optional[str] = None
     tsa_known_traveler: Optional[str] = None
     seat_preference: Optional[str] = None
@@ -24,6 +30,10 @@ class ProfileIn(BaseModel):
 
 
 class ProfileOut(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    phone: Optional[str] = None
     passport_number: Optional[str] = None   # masked
     tsa_known_traveler: Optional[str] = None  # masked
     seat_preference: Optional[str] = None
@@ -54,6 +64,10 @@ def get_profile(
     decrypted_tsa = decrypt(user.tsa_known_traveler_enc)
 
     return ProfileOut(
+        first_name=user.first_name,
+        last_name=user.last_name,
+        date_of_birth=user.date_of_birth,
+        phone=user.phone,
         passport_number=_mask(decrypted_passport),
         tsa_known_traveler=_mask(decrypted_tsa),
         seat_preference=user.seat_preference,
@@ -75,6 +89,16 @@ def upsert_profile(
         user = User(email=email)
         db.add(user)
 
+    # Personal info
+    if data.first_name is not None:
+        user.first_name = data.first_name
+    if data.last_name is not None:
+        user.last_name = data.last_name
+    if data.date_of_birth is not None:
+        user.date_of_birth = data.date_of_birth
+    if data.phone is not None:
+        user.phone = data.phone
+
     # Only overwrite encrypted fields if new values were submitted
     if data.passport_number:
         user.passport_number_enc = encrypt(data.passport_number)
@@ -95,6 +119,10 @@ def upsert_profile(
     decrypted_tsa = decrypt(user.tsa_known_traveler_enc)
 
     return ProfileOut(
+        first_name=user.first_name,
+        last_name=user.last_name,
+        date_of_birth=user.date_of_birth,
+        phone=user.phone,
         passport_number=_mask(decrypted_passport),
         tsa_known_traveler=_mask(decrypted_tsa),
         seat_preference=user.seat_preference,
