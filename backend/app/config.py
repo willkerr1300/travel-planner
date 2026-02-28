@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # live site access.
     booking_mock_mode: bool = True
 
+    # SendGrid — transactional email for booking confirmations
+    # Leave empty to skip email delivery (best-effort, no error raised)
+    sendgrid_api_key: str = ""
+    sendgrid_from_email: str = "confirmations@travelplanner.app"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

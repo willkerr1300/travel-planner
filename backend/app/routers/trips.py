@@ -7,7 +7,8 @@ from app.database import get_db
 from app.models import User, Trip, Booking, AgentLog
 from app.auth import require_internal_key, get_current_user_email
 from app.services.trip_parser import parse_trip_request
-from app.services.amadeus import search_flights, search_hotels
+from app.services.amadeus import search_flights, search_hotels, search_activities
+from app.services.confirmation import build_confirmation
 from app.services.itinerary import build_itinerary_options
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -136,6 +137,7 @@ async def create_trip(
 
         flight_offers: list = []
         hotel_offers: list = []
+        activity_offers: list = []
 
         if origin and destination and depart_date:
             try:
@@ -161,10 +163,22 @@ async def create_trip(
             except Exception as exc:
                 print(f"[trips] hotel search error: {exc}")
 
+        if destination and depart_date:
+            try:
+                activity_offers = await search_activities(
+                    city_code=destination,
+                    start_date=depart_date,
+                    end_date=return_date or depart_date,
+                    adults=num_travelers,
+                )
+            except Exception as exc:
+                print(f"[trips] activity search error: {exc}")
+
         options = build_itinerary_options(
             flight_offers=flight_offers,
             hotel_offers=hotel_offers,
             budget_total=float(budget_total) if budget_total else None,
+            activity_offers=activity_offers,
         )
 
         trip.itinerary_options = options
@@ -324,6 +338,16 @@ def book_trip(
         db.add(hotel_booking)
         created_bookings.append(hotel_booking)
 
+    for activity in approved.get("activities", []):
+        activity_booking = Booking(
+            trip_id=trip.id,
+            type="activity",
+            status="pending",
+            details={"activity": activity},
+        )
+        db.add(activity_booking)
+        created_bookings.append(activity_booking)
+
     trip.status = "booking"
     db.commit()
     for b in created_bookings:
@@ -360,3 +384,34 @@ def list_bookings(
 
     bookings = db.query(Booking).filter(Booking.trip_id == trip_id).all()
     return [_booking_to_out(b) for b in bookings]
+
+
+# ---------------------------------------------------------------------------
+# Consolidated confirmation (available once trip.status == "confirmed")
+# ---------------------------------------------------------------------------
+
+@router.get("/{trip_id}/confirmation")
+def get_confirmation(
+    trip_id: str,
+    email: str = Depends(get_current_user_email),
+    _key: str = Depends(require_internal_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Return a structured confirmation dict for a confirmed trip.
+    Includes PNR, hotel check-in/out, and activity names.
+    """
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+    trip = db.query(Trip).filter(Trip.id == trip_id, Trip.user_id == user.id).first()
+    if not trip:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+    if trip.status != "confirmed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Trip is not confirmed yet (current status: {trip.status})",
+        )
+
+    bookings = db.query(Booking).filter(Booking.trip_id == trip_id).all()
+    return build_confirmation(trip, bookings)

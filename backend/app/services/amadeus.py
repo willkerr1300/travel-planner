@@ -276,6 +276,61 @@ async def search_flights(
         return resp.json().get("data", [])
 
 
+def _mock_activities(city_code: str, start_date: str, end_date: str) -> list[dict]:
+    """Return mock Viator-style activity offers."""
+    return [
+        {
+            "activity_id": f"ACT-{city_code}-001",
+            "name": f"{city_code} City Walking Tour",
+            "description": (
+                "Explore the city's top landmarks and hidden gems on a guided walking tour. "
+                "Covers historic districts, local markets, and photo-worthy spots."
+            ),
+            "duration_hours": 3,
+            "price_usd": 45.0,
+            "category": "Tours & Sightseeing",
+            "date": start_date,
+        },
+        {
+            "activity_id": f"ACT-{city_code}-002",
+            "name": "Skip-the-Line Museum Entry",
+            "description": (
+                "Priority access to the city's premier museum with a knowledgeable guide. "
+                "No waiting in long queues — head straight to the highlights."
+            ),
+            "duration_hours": 2,
+            "price_usd": 65.0,
+            "category": "Museums & Attractions",
+            "date": start_date,
+        },
+        {
+            "activity_id": f"ACT-{city_code}-003",
+            "name": "Local Food & Night Market Tour",
+            "description": (
+                "Sample authentic local cuisine at street stalls and night markets. "
+                "A culinary journey through the flavors of the destination."
+            ),
+            "duration_hours": 3,
+            "price_usd": 55.0,
+            "category": "Food & Drink",
+            "date": start_date,
+        },
+    ]
+
+
+async def search_activities(
+    city_code: str,
+    start_date: str,
+    end_date: str,
+    adults: int = 1,
+) -> list[dict]:
+    """
+    Return activity offers for a city. Always returns mock data (Viator
+    integration is mock-only in this release).
+    """
+    return _mock_activities(city_code, start_date, end_date)
+
+
 async def search_hotels(
     city_code: str,
     check_in: str,

@@ -19,8 +19,10 @@ Live mode  (BOOKING_MOCK_MODE=false)
 
 Supported sites (live mode)
 ---------------------------
-Flights : United Airlines  (carrier code "UA")
-Hotels  : Marriott.com     (any hotel in the approved itinerary)
+Flights : United Airlines (UA), Delta (DL), American Airlines (AA), Southwest (WN)
+Hotels  : Expedia (default); Marriott.com for Marriott-brand hotels when the
+          traveler has a Marriott loyalty number
+Activities: Not supported in live mode (use mock mode)
 
 Any other carrier in live mode raises BookingNotSupported, which sets the
 booking status to "unsupported" rather than "failed".
@@ -42,7 +44,20 @@ from app.config import settings
 
 
 class BookingNotSupported(Exception):
-    """Raised when the carrier/hotel is not supported for automated booking."""
+    """Raised when the carrier/hotel/activity is not supported for automated booking."""
+
+
+SUPPORTED_CARRIERS = {
+    "UA": "https://www.united.com/en/us/book/flights",
+    "DL": "https://www.delta.com/us/en/flight-search/book-a-flight",
+    "AA": "https://www.aa.com/booking/find-flights",
+    "WN": "https://www.southwest.com/air/booking/",
+}
+
+MARRIOTT_BRANDS = {
+    "marriott", "westin", "sheraton", "w hotel", "st. regis",
+    "ritz-carlton", "courtyard", "residence inn",
+}
 
 
 class BookingAgent:
@@ -74,6 +89,11 @@ class BookingAgent:
             return await self._book_flight(itinerary["flight"], traveler, virtual_card)
         elif booking_type == "hotel":
             return await self._book_hotel(itinerary["hotel"], traveler, virtual_card)
+        elif booking_type == "activity":
+            raise BookingNotSupported(
+                "Activity booking via Viator is not yet supported in live mode. "
+                "Set BOOKING_MOCK_MODE=true to simulate activity bookings."
+            )
         else:
             raise ValueError(f"Unknown booking type: {booking_type}")
 
@@ -83,15 +103,27 @@ class BookingAgent:
 
     async def _mock_booking(self, booking_type: str, itinerary: dict, traveler: dict) -> str:
         """Simulate a realistic booking flow without a real browser."""
+        _carrier_sites = {
+            "UA": "united.com",
+            "DL": "delta.com",
+            "AA": "aa.com",
+            "WN": "southwest.com",
+        }
         if booking_type == "flight":
             flight = itinerary.get("flight", {})
             carrier = flight.get("carrier", "UA")
-            site = "united.com" if carrier == "UA" else f"{carrier.lower()}.com"
+            site = _carrier_sites.get(carrier, f"{carrier.lower()}.com")
             detail = flight.get("segments", [{}])[0]
             target = f"{detail.get('from', '???')} → {detail.get('to', '???')}"
+        elif booking_type == "activity":
+            activity = itinerary.get("activity", {})
+            site = "viator.com"
+            target = activity.get("name", "activity")
         else:
             hotel = itinerary.get("hotel", {})
-            site = "marriott.com"
+            hotel_name = hotel.get("name", "").lower()
+            is_marriott = any(brand in hotel_name for brand in MARRIOTT_BRANDS)
+            site = "marriott.com" if is_marriott else "expedia.com"
             target = hotel.get("name", "hotel")
 
         steps = [
@@ -115,25 +147,33 @@ class BookingAgent:
         return confirmation
 
     # ------------------------------------------------------------------
-    # Live mode — United Airlines
+    # Live mode — Airlines (UA, DL, AA, WN)
     # ------------------------------------------------------------------
 
     async def _book_flight(self, flight: dict, traveler: dict, virtual_card: dict) -> str:
         carrier = flight.get("carrier", "")
-        if carrier != "UA":
+        if carrier not in SUPPORTED_CARRIERS:
             raise BookingNotSupported(
-                f"Only United Airlines (UA) is supported for automated flight booking. "
-                f"Got carrier: {carrier!r}. Set BOOKING_MOCK_MODE=true to simulate any carrier."
+                f"Carrier {carrier!r} is not supported for automated flight booking. "
+                f"Supported carriers: {', '.join(SUPPORTED_CARRIERS)}. "
+                f"Set BOOKING_MOCK_MODE=true to simulate any carrier."
             )
 
         segments = flight.get("segments", [])
         if not segments:
             raise ValueError("Flight has no segments")
 
+        carrier_url = SUPPORTED_CARRIERS[carrier]
+        carrier_names = {"UA": "United Airlines", "DL": "Delta Air Lines", "AA": "American Airlines", "WN": "Southwest Airlines"}
+        carrier_name = carrier_names.get(carrier, carrier)
+        site = carrier_url.split("/")[2]  # e.g. "www.united.com"
+
         outbound = segments[0]
         context = {
             "goal": "book_flight",
-            "site": "united.com",
+            "carrier": carrier,
+            "carrier_name": carrier_name,
+            "site": site,
             "flight_number": outbound.get("flight", ""),
             "depart_date": outbound.get("departs", "")[:10],
             "origin": outbound.get("from", ""),
@@ -158,18 +198,32 @@ class BookingAgent:
         }
 
         async with self._browser_page() as page:
-            self._log_step("navigate", "Navigating to united.com", "in_progress")
-            await page.goto("https://www.united.com/en/us/book/flights", timeout=30_000)
+            self._log_step("navigate", f"Navigating to {site}", "in_progress")
+            await page.goto(carrier_url, timeout=30_000)
             return await self._agent_loop(page, context)
 
     # ------------------------------------------------------------------
-    # Live mode — Marriott
+    # Live mode — Hotels (Expedia default, Marriott for loyalty members)
     # ------------------------------------------------------------------
 
     async def _book_hotel(self, hotel: dict, traveler: dict, virtual_card: dict) -> str:
+        hotel_name = hotel.get("name", "").lower()
+        is_marriott_brand = any(brand in hotel_name for brand in MARRIOTT_BRANDS)
+        has_marriott_loyalty = any(
+            ln.get("program", "").lower() in ("marriott bonvoy", "marriott")
+            for ln in traveler.get("loyalty_numbers", [])
+        )
+
+        if is_marriott_brand and has_marriott_loyalty:
+            site = "www.marriott.com"
+            booking_url = "https://www.marriott.com/reservation/availabilitySearch.mi"
+        else:
+            site = "www.expedia.com"
+            booking_url = "https://www.expedia.com/Hotel-Search"
+
         context = {
             "goal": "book_hotel",
-            "site": "marriott.com",
+            "site": site,
             "hotel_name": hotel.get("name", ""),
             "check_in": hotel.get("check_in", ""),
             "check_out": hotel.get("check_out", ""),
@@ -190,8 +244,8 @@ class BookingAgent:
         }
 
         async with self._browser_page() as page:
-            self._log_step("navigate", "Navigating to marriott.com", "in_progress")
-            await page.goto("https://www.marriott.com/reservation/availabilitySearch.mi", timeout=30_000)
+            self._log_step("navigate", f"Navigating to {site}", "in_progress")
+            await page.goto(booking_url, timeout=30_000)
             return await self._agent_loop(page, context)
 
     # ------------------------------------------------------------------
@@ -268,8 +322,9 @@ class BookingAgent:
         goal = context.get("goal", "")
 
         if goal == "book_flight":
+            carrier_name = context.get("carrier_name", context.get("carrier", "airline"))
             task = (
-                f"Book a United Airlines flight:\n"
+                f"Book a {carrier_name} flight on {context.get('site')}:\n"
                 f"  Flight: {context.get('flight_number')} departing {context.get('depart_date')}\n"
                 f"  Route: {context.get('origin')} → {context.get('destination')}\n"
                 f"  Cabin: {context.get('cabin')}\n"
@@ -280,7 +335,7 @@ class BookingAgent:
             )
         else:
             task = (
-                f"Book a hotel room at {context.get('hotel_name')}:\n"
+                f"Book a hotel room at {context.get('hotel_name')} on {context.get('site')}:\n"
                 f"  Check-in: {context.get('check_in')}   Check-out: {context.get('check_out')}\n"
                 f"  Room type: {context.get('room_type')}\n"
                 f"  Guest: {json.dumps(context['passenger'])}\n"

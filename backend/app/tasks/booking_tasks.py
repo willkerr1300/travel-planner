@@ -73,6 +73,8 @@ async def _async_execute_trip_bookings(trip_id: str) -> None:
         approved = trip.approved_itinerary or {}
         all_confirmed = True
 
+        activity_bookings_count = sum(1 for b in bookings if b.type == "activity")
+
         for booking in bookings:
             booking.status = "in_progress"
             db.commit()
@@ -84,6 +86,13 @@ async def _async_execute_trip_bookings(trip_id: str) -> None:
                     amount = approved.get("flight", {}).get("price_usd", approved.get("total_usd", 0))
                 elif booking.type == "hotel":
                     amount = approved.get("hotel", {}).get("price_total_usd", approved.get("total_usd", 0))
+                elif booking.type == "activity":
+                    activities_total = approved.get("activities_total_usd", 0)
+                    amount = (
+                        activities_total / activity_bookings_count
+                        if activity_bookings_count > 0
+                        else 0
+                    )
                 else:
                     amount = approved.get("total_usd", 0)
 
@@ -95,10 +104,20 @@ async def _async_execute_trip_bookings(trip_id: str) -> None:
                 booking.virtual_card_id = virtual_card["card_id"]
                 db.commit()
 
+                # For activity bookings, inject the specific activity into
+                # the itinerary so the agent knows which one to simulate.
+                if booking.type == "activity":
+                    itinerary_for_agent = {
+                        **approved,
+                        "activity": (booking.details or {}).get("activity", {}),
+                    }
+                else:
+                    itinerary_for_agent = approved
+
                 agent = BookingAgent(booking_id=str(booking.id), db=db)
                 confirmation = await agent.run(
                     booking_type=booking.type,
-                    itinerary=approved,
+                    itinerary=itinerary_for_agent,
                     traveler=traveler,
                     virtual_card=virtual_card,
                 )
@@ -126,6 +145,24 @@ async def _async_execute_trip_bookings(trip_id: str) -> None:
 
         trip.status = "confirmed" if all_confirmed else "booking_failed"
         db.commit()
+
+        if all_confirmed:
+            try:
+                from app.models import Booking as BookingModel
+                from app.services.confirmation import build_confirmation
+                from app.services.email import send_booking_confirmation
+
+                all_bookings = db.query(BookingModel).filter(BookingModel.trip_id == trip_id).all()
+                confirmation = build_confirmation(trip, all_bookings)
+                user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
+                await send_booking_confirmation(
+                    user_email=user.email,
+                    user_name=user_name,
+                    confirmation=confirmation,
+                )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("[booking_tasks] email step failed: %s", exc)
 
     finally:
         db.close()

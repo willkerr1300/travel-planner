@@ -77,12 +77,14 @@ def build_itinerary_options(
     flight_offers: list[dict],
     hotel_offers: list[dict],
     budget_total: Optional[float] = None,
+    activity_offers: Optional[list[dict]] = None,
 ) -> list[dict]:
     """
     Build up to 3 itinerary packages from raw Amadeus results.
 
     Returns a list of option dicts, each with:
-      label, description, flight, hotel, total_usd, within_budget
+      label, description, flight, hotel, activities, total_usd,
+      activities_total_usd, within_budget
     """
     flights = [f for f in (_extract_flight(o) for o in flight_offers) if f]
     hotels = [h for h in (_extract_hotel(o) for o in hotel_offers) if h]
@@ -93,13 +95,20 @@ def build_itinerary_options(
     flights.sort(key=lambda f: f["price_usd"])
     hotels.sort(key=lambda h: h["price_total_usd"])
 
+    activities = activity_offers or []
+
     def _make_option(label: str, description: str, flight: dict, hotel: dict) -> dict:
-        total = round(flight["price_usd"] + hotel["price_total_usd"], 2)
+        # Include up to 3 activities in each option
+        selected_activities = activities[:3]
+        activities_total = round(sum(a.get("price_usd", 0) for a in selected_activities), 2)
+        total = round(flight["price_usd"] + hotel["price_total_usd"] + activities_total, 2)
         return {
             "label": label,
             "description": description,
             "flight": flight,
             "hotel": hotel,
+            "activities": selected_activities,
+            "activities_total_usd": activities_total,
             "total_usd": total,
             "within_budget": budget_total is None or total <= budget_total,
         }
